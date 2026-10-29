@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teman AI Offline</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:system-ui,sans-serif}
+body{background:#0f172a;color:#e2e8f0;height:100vh;display:flex;flex-direction:column}
+header{padding:12px;background:#1e293b;display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:6px}
+button,textarea{border:none;border-radius:10px;padding:10px;font-size:15px}
+button{background:#6366f1;color:#fff}
+.tabs button{flex:1;background:#334155}.tabs button.on{background:#6366f1}
+#chat{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
+.msg{max-width:85%;padding:10px 14px;border-radius:14px;white-space:pre-wrap}
+.user{align-self:flex-end;background:#6366f1}.ai{align-self:flex-start;background:#1e293b}
+footer{padding:10px;background:#1e293b;display:flex;gap:6px}
+textarea{flex:1;resize:none;height:46px;background:#334155;color:#fff}
+</style>
+</head>
+<body>
+<header>
+  <b>🤖 Teman AI Offline</b> <small id="st">Memuat model...</small>
+  <div class="row tabs">
+    <button id="t-chat" class="on">💬 Chatbot</button>
+    <button id="t-belajar">📚 Asisten Belajar</button>
+    <button id="reset">🗑</button>
+  </div>
+</header>
+<div id="chat"></div>
+<footer><textarea id="inp" placeholder="Ketik pesan..."></textarea><button id="kirim">Kirim</button></footer>
+
+<script type="module">
+import { Wllama } from './esm/index.js';
+const $ = id => document.getElementById(id);
+const PROMPTS = {
+  chat: "Kamu chatbot ramah. Jawab singkat dalam Bahasa Indonesia.",
+  belajar: "Kamu asisten belajar yang sabar. Jelaskan langkah demi langkah dengan bahasa sederhana dan contoh, lalu beri 1 soal latihan. Jawab dalam Bahasa Indonesia."
+};
+let mode = "chat", ready = false;
+const history = { chat: [], belajar: [] };
+
+const wllama = new Wllama({ default: './esm/wasm/wllama.wasm' });
+wllama.loadModelFromUrl('./model.gguf', {
+  progressCallback: ({ loaded, total }) => $("st").textContent = "Memuat model " + Math.round(loaded/total*100) + "%"
+}).then(() => { ready = true; $("st").textContent = "Siap (offline)"; })
+  .catch(e => $("st").textContent = "Gagal memuat: " + e.message);
+
+function add(who, text){
+  const d = document.createElement("div");
+  d.className = "msg " + who; d.textContent = text;
+  $("chat").appendChild(d); $("chat").scrollTop = 1e9; return d;
+}
+function render(){
+  $("chat").innerHTML = "";
+  history[mode].forEach(m => add(m.role === "user" ? "user" : "ai", m.content));
+}
+function setMode(m){
+  mode = m;
+  $("t-chat").classList.toggle("on", m === "chat");
+  $("t-belajar").classList.toggle("on", m === "belajar");
+  render();
+}
+async function send(){
+  const text = $("inp").value.trim();
+  if(!text) return;
+  if(!ready){ alert("Model masih dimuat, tunggu sebentar."); return; }
+  $("inp").value = "";
+  history[mode].push({ role: "user", content: text });
+  add("user", text);
+  const wait = add("ai", "Sedang berpikir...");
+  try{
+    const r = await wllama.createChatCompletion({
+      messages: [{ role: "system", content: PROMPTS[mode] }, ...history[mode].slice(-6)],
+      max_tokens: 300, temperature: 0.7, top_k: 40, top_p: 0.9
+    });
+    const reply = r.choices[0].message.content;
+    history[mode].push({ role: "assistant", content: reply });
+    wait.textContent = reply;
+  }catch(e){ history[mode].pop(); wait.textContent = "Error: " + e.message; }
+}
+$("t-chat").onclick = () => setMode("chat");
+$("t-belajar").onclick = () => setMode("belajar");
+$("reset").onclick = () => { history[mode] = []; render(); };
+$("kirim").onclick = send;
+$("inp").addEventListener("keydown", e => { if(e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send(); } });
+</script>
+</body>
+</html>
